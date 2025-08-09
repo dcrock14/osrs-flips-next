@@ -579,7 +579,7 @@ function parseRuneLiteCSV(text: string, tax: number) {
       }
     }
   }
-
+//
   return flips;
 }
 ;
