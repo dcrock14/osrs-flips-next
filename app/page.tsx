@@ -470,98 +470,117 @@ function RuneLiteImport({ onAdd }:{ onAdd:(items:Flip[])=>void }){
   );
 }
 
-function parseRuneLiteCSV(text:string, tax:number){
-  const linesRaw = text.split(/\\r?\\n/).filter(Boolean);
-  if(linesRaw.length < 2) throw new Error("File is empty");
-const delim = linesRaw[0].includes("\t") ? "\t" : ",";
-  const split = (row:string) => row.split(delim).map(s=> s.trim());
-  const header = split(linesRaw[0]).map(h=> h.toLowerCase());
+function parseRuneLiteCSV(text: string, tax: number) {
+  // Split lines and ensure there is at least a header + one row
+  const linesRaw = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+  if (linesRaw.length < 2) throw new Error("File is empty");
 
-  const isSummary = header.includes("first buy time") && header.some(h=> h.includes("avg. buy price"));
+  // Detect delimiter: tab (TSV) vs comma (CSV)
+  const delim = linesRaw[0].includes("\t") ? "\t" : ",";
+  const split = (row: string) => row.split(delim).map(s => s.trim());
 
-  if(isSummary){
+  // Normalize header
+  const header = split(linesRaw[0]).map(h => h.toLowerCase());
+
+  // Summary exports (already paired flips)
+  const isSummary = header.includes("first buy time") && header.some(h => h.includes("avg. buy price"));
+  if (isSummary) {
     const idx = {
-      item: header.findIndex(h=> h==="item"),
-      bought: header.findIndex(h=> h==="bought"),
-      sold: header.findIndex(h=> h==="sold"),
-      avgBuy: header.findIndex(h=> h.includes("avg. buy")),
-      avgSell: header.findIndex(h=> h.includes("avg. sell")),
-      tax: header.findIndex(h=> h==="tax"),
-      lastSell: header.findIndex(h=> h.includes("last sell")),
+      item: header.findIndex(h => h === "item"),
+      bought: header.findIndex(h => h === "bought"),
+      sold: header.findIndex(h => h === "sold"),
+      avgBuy: header.findIndex(h => h.includes("avg. buy")),
+      avgSell: header.findIndex(h => h.includes("avg. sell")),
+      tax: header.findIndex(h => h === "tax"),
+      lastSell: header.findIndex(h => h.includes("last sell")),
     } as const;
-    if(Object.values(idx).some(v=> v===-1)) throw new Error("Unrecognized summary columns");
+
+    if (Object.values(idx).some(v => v === -1)) {
+      throw new Error("Unrecognized summary columns");
+    }
 
     const flips: Flip[] = [];
-    for(const row of linesRaw.slice(1)){
+    for (const row of linesRaw.slice(1)) {
       const c = split(row);
       const item = c[idx.item];
-      const qtySold = Number(c[idx.sold]||0);
-      const qtyBought = Number(c[idx.bought]||0);
+      const qtySold = Number(c[idx.sold] || 0);
+      const qtyBought = Number(c[idx.bought] || 0);
       const qty = Math.min(qtySold, qtyBought) || qtySold || qtyBought;
-      const avgBuy = Number(c[idx.avgBuy]||0);
-      const avgSell = Number(c[idx.avgSell]||0);
-      const totalTax = Number(c[idx.tax]||0);
-      const ts = Date.parse(c[idx.lastSell]||"") || Date.now();
-      if(!item || !qty || !avgBuy || !avgSell) continue;
-      const perUnitTax = qty ? (totalTax/qty) : 0;
+      const avgBuy = Number(c[idx.avgBuy] || 0);
+      const avgSell = Number(c[idx.avgSell] || 0);
+      const totalTax = Number(c[idx.tax] || 0);
+      const ts = Date.parse(c[idx.lastSell] || "") || Date.now();
+      if (!item || !qty || !avgBuy || !avgSell) continue;
+      const perUnitTax = qty ? totalTax / qty : 0;
       const netSellPer = Math.max(0, avgSell - perUnitTax);
       flips.push({ id: crypto.randomUUID(), item, qty, buyPrice: avgBuy, sellPrice: netSellPer, ts });
     }
     return flips;
   }
 
+  // Offer log export (BUY/SELL rows) — build offers then FIFO match
   const idx = {
-    time: header.findIndex(h=> /time/.test(h)),
-    type: header.findIndex(h=> /(offer|type)/.test(h)),
-    item: header.findIndex(h=> /item/.test(h)),
-    price: header.findIndex(h=> /price/.test(h)),
-    qty: header.findIndex(h=> /(qty|quantity)/.test(h)),
+    time: header.findIndex(h => /time/.test(h)),
+    type: header.findIndex(h => /(offer|type)/.test(h)),
+    item: header.findIndex(h => /item/.test(h)),
+    price: header.findIndex(h => /price/.test(h)),
+    qty: header.findIndex(h => /(qty|quantity)/.test(h)),
   } as const;
-  if(Object.values(idx).some(v=> v===-1)) throw new Error("Unrecognized header for offer log");
 
-  type Offer = { ts:number, item:string, type:"BUY"|"SELL", qty:number, price:number };
-  const offers: Offer[] = linesRaw.slice(1).map((row)=>{
-    const cells = split(row);
-    const typeRaw = (cells[idx.type]||"").toUpperCase();
-    type OfferType = "BUY" | "SELL";
+  if (Object.values(idx).some(v => v === -1)) {
+    throw new Error("Unrecognized header for offer log");
+  }
 
-const offers: Offer[] = linesRaw.slice(1).map((row) => {
-  const cells = split(row);
+  type OfferType = "BUY" | "SELL";
+  type Offer = { ts: number; item: string; type: OfferType; qty: number; price: number };
 
-  const typeRaw = (cells[idx.type] || "").toUpperCase();
-  const type: OfferType =
-    typeRaw.includes("BUY") || typeRaw.includes("BOUGHT") ? "BUY" : "SELL";
+  const offers: Offer[] = linesRaw
+    .slice(1)
+    .map((row) => {
+      const cells = split(row);
+      const typeRaw = (cells[idx.type] || "").toUpperCase();
+      const type: OfferType =
+        typeRaw.includes("BUY") || typeRaw.includes("BOUGHT") ? "BUY" : "SELL";
+      const ts = Date.parse(cells[idx.time] || "") || Date.now();
+      const item = (cells[idx.item] || "").trim();
+      const qty = Number(cells[idx.qty] || 0);
+      const price = Number(cells[idx.price] || 0);
+      return { ts, item, type, qty, price };
+    })
+    .filter((o) => o.item && o.qty > 0 && o.price > 0);
 
-  const ts = Date.parse(cells[idx.time] || "") || Date.now();
-  const item = (cells[idx.item] || "").trim();
-  const qty = Number(cells[idx.qty] || 0);
-  const price = Number(cells[idx.price] || 0);
-
-  return { ts, item, type, qty, price };
-}).filter(o => o.item && o.qty > 0 && o.price > 0);
-
-
-  offers.sort((a,b)=> a.ts-b.ts);
-  const queues: Record<string, { qty:number, price:number }[]> = {};
+  // FIFO match per item
+  offers.sort((a, b) => a.ts - b.ts);
+  const queues: Record<string, { qty: number; price: number }[]> = {};
   const flips: Flip[] = [];
 
-  for(const o of offers){
+  for (const o of offers) {
     queues[o.item] ||= [];
-    if(o.type === "BUY"){
+    if (o.type === "BUY") {
       queues[o.item].push({ qty: o.qty, price: o.price });
-    }else{
+    } else {
       let remaining = o.qty;
-      while(remaining>0){
+      while (remaining > 0) {
         const lot = queues[o.item][0];
-        if(!lot) break;
+        if (!lot) break; // unmatched sell remainder is dropped
         const take = Math.min(remaining, lot.qty);
-        const sellPriceNet = o.price * (1 - tax);
-        flips.push({ id: crypto.randomUUID(), item: o.item, qty: take, buyPrice: lot.price, sellPrice: sellPriceNet, ts: o.ts });
+        const sellPriceNet = o.price * (1 - tax); // apply GE tax to sell side
+        flips.push({
+          id: crypto.randomUUID(),
+          item: o.item,
+          qty: take,
+          buyPrice: lot.price,
+          sellPrice: sellPriceNet,
+          ts: o.ts,
+        });
         lot.qty -= take;
         remaining -= take;
-        if(lot.qty<=0) queues[o.item].shift();
+        if (lot.qty <= 0) queues[o.item].shift();
       }
     }
   }
+
   return flips;
 }
+;
+
