@@ -473,7 +473,7 @@ function RuneLiteImport({ onAdd }:{ onAdd:(items:Flip[])=>void }){
 function parseRuneLiteCSV(text:string, tax:number){
   const linesRaw = text.split(/\\r?\\n/).filter(Boolean);
   if(linesRaw.length < 2) throw new Error("File is empty");
-  const delim = linesRaw[0].includes("\t") ? "\t" : ",";
+const delim = linesRaw[0].includes("\t") ? "\t" : ",";
   const split = (row:string) => row.split(delim).map(s=> s.trim());
   const header = split(linesRaw[0]).map(h=> h.toLowerCase());
 
@@ -524,18 +524,22 @@ function parseRuneLiteCSV(text:string, tax:number){
     const cells = split(row);
     const typeRaw = (cells[idx.type]||"").toUpperCase();
     type OfferType = "BUY" | "SELL";
-const toOfferType = (s: string): OfferType => (
-  s.includes("BUY") || s.includes("BOUGHT") ? "BUY" : "SELL"
-);
 
-const typeRaw = (cells[idx.type]||"").toUpperCase();
-const type: OfferType = toOfferType(typeRaw);
+const offers: Offer[] = linesRaw.slice(1).map((row) => {
+  const cells = split(row);
 
-    const item = (cells[idx.item]||"").trim();
-    const qty = Number(cells[idx.qty]||0);
-    const price = Number(cells[idx.price]||0);
-    return { ts, item, type, qty, price };
-  }).filter(o=> o.item && o.qty>0 && o.price>0);
+  const typeRaw = (cells[idx.type] || "").toUpperCase();
+  const type: OfferType =
+    typeRaw.includes("BUY") || typeRaw.includes("BOUGHT") ? "BUY" : "SELL";
+
+  const ts = Date.parse(cells[idx.time] || "") || Date.now();
+  const item = (cells[idx.item] || "").trim();
+  const qty = Number(cells[idx.qty] || 0);
+  const price = Number(cells[idx.price] || 0);
+
+  return { ts, item, type, qty, price };
+}).filter(o => o.item && o.qty > 0 && o.price > 0);
+
 
   offers.sort((a,b)=> a.ts-b.ts);
   const queues: Record<string, { qty:number, price:number }[]> = {};
